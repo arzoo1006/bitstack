@@ -8,7 +8,6 @@ BitStack - FAST processing mode:
 """
 
 """BitStack - processing and reporting utilities."""
-from __future__ import annotations
 
 # ensure matplotlib uses headless backend (must be set before pyplot import)
 import matplotlib
@@ -515,5 +514,6 @@ def process_csv(
     # success
     ret.update({"trained": training_info.get("trained", False), "training_info": training_info, "report": report_path, "cleaned_csv": cleaned_csv_path})
     return ret
+
 
 
