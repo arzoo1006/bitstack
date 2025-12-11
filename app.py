@@ -6,7 +6,7 @@ BitStack simple UI (uses user's supplied HTML)
                   runs report_generator.process_csv, writes log.txt, redirects to report
 """
 
-from fastapi import FastAPI, UploadFile, File, Form
+'''from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -243,4 +243,57 @@ async def report(file: UploadFile = File(...)):
         return RedirectResponse(url=f"/workspace/{run_id}/report.html", status_code=303)
     else:
         err = result.get("error", "Unknown error")
-        return HTMLResponse(f"<pre>Processing failed: {err}\\nSee /workspace/{run_id}/log.txt</pre>", status_code=500)
+        return HTMLResponse(f"<pre>Processing failed: {err}\\nSee /workspace/{run_id}/log.txt</pre>", status_code=500)'''
+
+
+
+import streamlit as st
+import pandas as pd
+import os
+from report_generator import generate_report
+import uuid
+
+st.set_page_config(page_title="BitStack", layout="wide")
+
+st.title("📊 BitStack • Automated Data Cleaning, EDA & Auto-ML")
+
+st.write("Upload your dataset and BitStack will clean it, analyze it and train the best model automatically.")
+
+uploaded = st.file_uploader("Upload CSV file", type=["csv"])
+
+if uploaded:
+    # Create workspace folder
+    os.makedirs("workspace", exist_ok=True)
+
+    # Read user dataset
+    df = pd.read_csv(uploaded)
+
+    st.success(f"Dataset uploaded successfully! Shape: {df.shape}")
+
+    # Generate unique session ID
+    run_id = str(uuid.uuid4())
+    run_folder = f"workspace/{run_id}"
+    os.makedirs(run_folder, exist_ok=True)
+
+    # Process dataset using report_generator function
+    with st.spinner("Cleaning dataset, generating EDA, and training models..."):
+        result = generate_report(df, run_folder)
+
+    cleaned_path = result["cleaned_path"]
+    report_path = result["report_path"]
+    model_path = result["model_path"]
+
+    st.subheader("📥 Download Cleaned Dataset")
+    with open(cleaned_path, "rb") as f:
+        st.download_button("Download Cleaned CSV", f, file_name="cleaned_dataset.csv")
+
+    st.subheader("🤖 Download Best-Trained Model")
+    with open(model_path, "rb") as f:
+        st.download_button("Download Best Model (.pkl)", f, file_name="best_model.pkl")
+
+    st.subheader("📑 View Report")
+    with open(report_path, "r", encoding="utf-8") as f:
+        html = f.read()
+    st.components.v1.html(html, height=900, scrolling=True)
+
+
