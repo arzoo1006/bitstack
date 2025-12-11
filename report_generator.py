@@ -7,8 +7,6 @@ BitStack - FAST processing mode:
 - saves artifacts into outdir and returns training_info for the caller
 """
 
-"""BitStack - processing and reporting utilities."""
-
 # ensure matplotlib uses headless backend (must be set before pyplot import)
 import matplotlib
 matplotlib.use("Agg")
@@ -22,12 +20,13 @@ import datetime
 from io import BytesIO
 from typing import Optional, Tuple, Dict, Any, List
 
+import math
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import cross_val_score, train_test_split
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.ensemble import (
@@ -58,13 +57,6 @@ def fig_to_b64(fig) -> str:
     b64 = base64.b64encode(buf.read()).decode("utf-8")
     plt.close(fig)
     return b64
-
-
-def onehot_compat():
-    try:
-        return OneHotEncoder(handle_unknown="ignore", sparse_output=False)
-    except TypeError:
-        return OneHotEncoder(handle_unknown="ignore", sparse=False)
 
 
 # ---------- EDA helpers ----------
@@ -175,23 +167,25 @@ def create_cleaned_full(df: pd.DataFrame, target_col: Optional[str] = None) -> T
 
     for c in num_cols:
         if dfc[c].isnull().any():
-            dfc[c].fillna(dfc[c].median(), inplace=True)
+            # avoid chained-setter / inplace warnings
+            dfc[c] = dfc[c].fillna(dfc[c].median())
     for c in cat_cols:
         if dfc[c].isnull().any():
             try:
-                dfc[c].fillna(dfc[c].mode().iloc[0], inplace=True)
+                mode_val = dfc[c].mode().iloc[0]
+                dfc[c] = dfc[c].fillna(mode_val)
             except Exception:
-                dfc[c].fillna("", inplace=True)
+                dfc[c] = dfc[c].fillna("")
 
     # impute target if exists
     if target_col and target_col in dfc.columns and dfc[target_col].isnull().any():
         if np.issubdtype(dfc[target_col].dtype, np.number):
-            dfc[target_col].fillna(dfc[target_col].median(), inplace=True)
+            dfc[target_col] = dfc[target_col].fillna(dfc[target_col].median())
         else:
             try:
-                dfc[target_col].fillna(dfc[target_col].mode().iloc[0], inplace=True)
+                dfc[target_col] = dfc[target_col].fillna(dfc[target_col].mode().iloc[0])
             except Exception:
-                dfc[target_col].fillna("", inplace=True)
+                dfc[target_col] = dfc[target_col].fillna("")
 
     cleaned_full = dfc.copy()
 
@@ -217,19 +211,19 @@ def create_cleaned_full(df: pd.DataFrame, target_col: Optional[str] = None) -> T
 
 
 # ---------- evaluation & training (FAST) ----------
-def evaluate_candidates(X: pd.DataFrame, y: pd.Series, task_type: str, reduced_estimators: int = 30):
+def evaluate_candidates(X: pd.DataFrame, y: pd.Series, task_type: str, reduced_estimators: int = 15):
     results = []
     if task_type == "classification":
         candidates = [
             ("LogisticRegression", LogisticRegression(max_iter=1000)),
-            ("RandomForest", RandomForestClassifier(n_estimators=reduced_estimators, n_jobs=-1)),
+            ("RandomForest", RandomForestClassifier(n_estimators=reduced_estimators, n_jobs=1)),
             ("GBM", GradientBoostingClassifier(n_estimators=reduced_estimators)),
         ]
         scoring = "accuracy"
     else:
         candidates = [
             ("LinearRegression", LinearRegression()),
-            ("RandomForestReg", RandomForestRegressor(n_estimators=reduced_estimators, n_jobs=-1)),
+            ("RandomForestReg", RandomForestRegressor(n_estimators=reduced_estimators, n_jobs=1)),
             ("GBMReg", GradientBoostingRegressor(n_estimators=reduced_estimators)),
         ]
         scoring = "r2"
@@ -244,12 +238,12 @@ def evaluate_candidates(X: pd.DataFrame, y: pd.Series, task_type: str, reduced_e
                 if task_type == "classification":
                     vc = y.value_counts()
                     if int(vc.min()) >= cv:
-                        scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=-1)
+                        scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=1)
                         sc = float(np.mean(scores))
                     else:
                         sc = float("-inf")
                 else:
-                    scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=-1)
+                    scores = cross_val_score(model, X, y, cv=cv, scoring=scoring, n_jobs=1)
                     sc = float(np.mean(scores))
             else:
                 # holdout
@@ -272,8 +266,8 @@ def process_csv(
     outdir: str,
     explicit_target: Optional[str] = None,
     fast_mode: bool = True,
-    sample_max_rows: int = 2000,
-    reduced_estimators: int = 30,
+    sample_max_rows: int = 1000,
+    reduced_estimators: int = 15,
 ) -> Dict[str, Any]:
     """
     Process an uploaded CSV:
@@ -400,13 +394,12 @@ def process_csv(
         if num_cols:
             max_per_fig = 8
             chunks = [num_cols[i:i + max_per_fig] for i in range(0, len(num_cols), max_per_fig)]
-            import math
             for idx, chunk in enumerate(chunks):
                 n = len(chunk)
                 cols = min(4, n)
                 rows = math.ceil(n / cols)
                 fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 3 * rows))
-                axes_flat = axes.flatten() if n > 1 else [axes]
+                axes_flat = np.atleast_1d(axes).ravel()
                 for i, col in enumerate(chunk):
                     ax = axes_flat[i]
                     try:
@@ -414,8 +407,12 @@ def process_csv(
                         ax.set_title(col, fontsize=9)
                     except Exception:
                         ax.set_visible(False)
+                # hide any leftover axes
                 for j in range(i + 1, len(axes_flat)):
-                    axes_flat[j].set_visible(False)
+                    try:
+                        axes_flat[j].set_visible(False)
+                    except Exception:
+                        pass
                 fig.tight_layout()
                 b = fig_to_b64(fig)
                 suffix = f" ({idx + 1}/{len(chunks)})" if len(chunks) > 1 else ""
@@ -514,6 +511,3 @@ def process_csv(
     # success
     ret.update({"trained": training_info.get("trained", False), "training_info": training_info, "report": report_path, "cleaned_csv": cleaned_csv_path})
     return ret
-
-
-
