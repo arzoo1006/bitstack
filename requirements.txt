@@ -1,6 +1,8 @@
-streamlit
+fastapi
+uvicorn[standard]
+gunicorn
+python-multipart
 pandas
 numpy
 scikit-learn
-matplotlib
-seaborn
+
