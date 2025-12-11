@@ -247,53 +247,75 @@ async def report(file: UploadFile = File(...)):
 
 
 
+# app.py — Streamlit front-end for BitStack
 import streamlit as st
 import pandas as pd
 import os
-from report_generator import generate_report
 import uuid
+import traceback
+import streamlit.components.v1 as components
+
+# import your processing function — make sure report_generator exposes generate_report(df, outdir)
+from report_generator import process_csv  # or generate_report depending on your file
 
 st.set_page_config(page_title="BitStack", layout="wide")
-
 st.title("📊 BitStack • Automated Data Cleaning, EDA & Auto-ML")
 
-st.write("Upload your dataset and BitStack will clean it, analyze it and train the best model automatically.")
+st.write("Upload a CSV and BitStack will clean it, analyze it, and (optionally) train a model.")
 
-uploaded = st.file_uploader("Upload CSV file", type=["csv"])
+# ensure workspace exists
+os.makedirs("workspace", exist_ok=True)
 
-if uploaded:
-    # Create workspace folder
-    os.makedirs("workspace", exist_ok=True)
+uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+if uploaded_file is not None:
+    st.success("File uploaded.")
+    run_id = uuid.uuid4().hex[:10]
+    run_dir = os.path.join("workspace", run_id)
+    os.makedirs(run_dir, exist_ok=True)
+    input_path = os.path.join(run_dir, "input.csv")
+    # save uploaded file
+    with open(input_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
 
-    # Read user dataset
-    df = pd.read_csv(uploaded)
+    st.info(f"Saved to workspace/{run_id}/input.csv")
 
-    st.success(f"Dataset uploaded successfully! Shape: {df.shape}")
+    # options
+    st.write("### Options")
+    fast_mode = st.checkbox("FAST mode (sample large datasets for speed)", value=True)
+    sample_max_rows = st.number_input("Sample max rows (FAST)", min_value=100, max_value=200000, value=2000, step=100)
+    reduced_estimators = st.number_input("Estimators per tree (FAST)", min_value=5, max_value=500, value=30, step=5)
 
-    # Generate unique session ID
-    run_id = str(uuid.uuid4())
-    run_folder = f"workspace/{run_id}"
-    os.makedirs(run_folder, exist_ok=True)
+    if st.button("Generate report"):
+        with st.spinner("Processing — cleaning, EDA, training (fast)..."):
+            try:
+                # process_csv returns a dict as in the earlier implementations
+                res = process_csv(input_path, run_dir, explicit_target=None,
+                                  fast_mode=fast_mode, sample_max_rows=sample_max_rows,
+                                  reduced_estimators=reduced_estimators)
+            except Exception as e:
+                st.error("Processing failed — see traceback below")
+                st.code(traceback.format_exc())
+                raise
 
-    # Process dataset using report_generator function
-    with st.spinner("Cleaning dataset, generating EDA, and training models..."):
-        result = generate_report(df, run_folder)
+        if res.get("report") and os.path.exists(res["report"]):
+            st.success("Report generated!")
+            # Show report content embedded (safe)
+            with open(res["report"], "r", encoding="utf-8") as rf:
+                html = rf.read()
+            components.html(html, height=800, scrolling=True)
 
-    cleaned_path = result["cleaned_path"]
-    report_path = result["report_path"]
-    model_path = result["model_path"]
+        else:
+            st.error("Report not found. See workspace logs.")
+            st.write(res.get("error", "Unknown error"))
 
-    st.subheader("📥 Download Cleaned Dataset")
-    with open(cleaned_path, "rb") as f:
-        st.download_button("Download Cleaned CSV", f, file_name="cleaned_dataset.csv")
-
-    st.subheader("🤖 Download Best-Trained Model")
-    with open(model_path, "rb") as f:
-        st.download_button("Download Best Model (.pkl)", f, file_name="best_model.pkl")
-
-    st.subheader("📑 View Report")
-    with open(report_path, "r", encoding="utf-8") as f:
-        html = f.read()
-    st.components.v1.html(html, height=900, scrolling=True)
-
-
+# recent runs
+st.markdown("---")
+st.subheader("Recent runs")
+workspace = "workspace"
+if os.path.isdir(workspace):
+    runs = sorted([d for d in os.listdir(workspace) if os.path.isdir(os.path.join(workspace, d))],
+                  key=lambda x: os.path.getmtime(os.path.join(workspace, x)), reverse=True)
+    for rid in runs[:10]:
+        st.markdown(f"**{rid}** — [report](/workspace/{rid}/report.html) (if exists)")
+else:
+    st.write("No runs yet.")
