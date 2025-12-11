@@ -6,7 +6,7 @@ BitStack simple UI (uses user's supplied HTML)
                   runs report_generator.process_csv, writes log.txt, redirects to report
 """
 
-'''from fastapi import FastAPI, UploadFile, File, Form
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
@@ -243,79 +243,6 @@ async def report(file: UploadFile = File(...)):
         return RedirectResponse(url=f"/workspace/{run_id}/report.html", status_code=303)
     else:
         err = result.get("error", "Unknown error")
-        return HTMLResponse(f"<pre>Processing failed: {err}\\nSee /workspace/{run_id}/log.txt</pre>", status_code=500)'''
+        return HTMLResponse(f"<pre>Processing failed: {err}\\nSee /workspace/{run_id}/log.txt</pre>", status_code=500)
 
 
-
-# app.py — Streamlit front-end for BitStack
-import streamlit as st
-import pandas as pd
-import os
-import uuid
-import traceback
-import streamlit.components.v1 as components
-
-# import your processing function — make sure report_generator exposes generate_report(df, outdir)
-from report_generator import process_csv  # or generate_report depending on your file
-
-st.set_page_config(page_title="BitStack", layout="wide")
-st.title("📊 BitStack • Automated Data Cleaning, EDA & Auto-ML")
-
-st.write("Upload a CSV and BitStack will clean it, analyze it, and (optionally) train a model.")
-
-# ensure workspace exists
-os.makedirs("workspace", exist_ok=True)
-
-uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
-if uploaded_file is not None:
-    st.success("File uploaded.")
-    run_id = uuid.uuid4().hex[:10]
-    run_dir = os.path.join("workspace", run_id)
-    os.makedirs(run_dir, exist_ok=True)
-    input_path = os.path.join(run_dir, "input.csv")
-    # save uploaded file
-    with open(input_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-
-    st.info(f"Saved to workspace/{run_id}/input.csv")
-
-    # options
-    st.write("### Options")
-    fast_mode = st.checkbox("FAST mode (sample large datasets for speed)", value=True)
-    sample_max_rows = st.number_input("Sample max rows (FAST)", min_value=100, max_value=200000, value=2000, step=100)
-    reduced_estimators = st.number_input("Estimators per tree (FAST)", min_value=5, max_value=500, value=30, step=5)
-
-    if st.button("Generate report"):
-        with st.spinner("Processing — cleaning, EDA, training (fast)..."):
-            try:
-                # process_csv returns a dict as in the earlier implementations
-                res = process_csv(input_path, run_dir, explicit_target=None,
-                                  fast_mode=fast_mode, sample_max_rows=sample_max_rows,
-                                  reduced_estimators=reduced_estimators)
-            except Exception as e:
-                st.error("Processing failed — see traceback below")
-                st.code(traceback.format_exc())
-                raise
-
-        if res.get("report") and os.path.exists(res["report"]):
-            st.success("Report generated!")
-            # Show report content embedded (safe)
-            with open(res["report"], "r", encoding="utf-8") as rf:
-                html = rf.read()
-            components.html(html, height=800, scrolling=True)
-
-        else:
-            st.error("Report not found. See workspace logs.")
-            st.write(res.get("error", "Unknown error"))
-
-# recent runs
-st.markdown("---")
-st.subheader("Recent runs")
-workspace = "workspace"
-if os.path.isdir(workspace):
-    runs = sorted([d for d in os.listdir(workspace) if os.path.isdir(os.path.join(workspace, d))],
-                  key=lambda x: os.path.getmtime(os.path.join(workspace, x)), reverse=True)
-    for rid in runs[:10]:
-        st.markdown(f"**{rid}** — [report](/workspace/{rid}/report.html) (if exists)")
-else:
-    st.write("No runs yet.")
