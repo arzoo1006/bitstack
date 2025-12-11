@@ -7,6 +7,9 @@ BitStack - FAST processing mode:
 - saves artifacts into outdir and returns training_info for the caller
 """
 
+import matplotlib
+matplotlib.use("Agg")
+
 from __future__ import annotations
 import os
 import traceback
@@ -508,3 +511,4 @@ def process_csv(
     # success
     ret.update({"trained": training_info.get("trained", False), "training_info": training_info, "report": report_path, "cleaned_csv": cleaned_csv_path})
     return ret
+
